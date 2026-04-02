@@ -1,0 +1,22 @@
+/* Altera cor do fundo de mensagens do usuário */
+.message.user {
+    background-color: hsl(var(--primary)) !important;
+    color: hsl(var(--primary-foreground)) !important;
+  }
+  
+  /* Altera borda do chat e cor de foco */
+  .chat-container {
+    border: 2px solid hsl(var(--primary)) !important;
+  }
+  
+  /* Link dentro das mensagens */
+  .message a {
+    color: hsl(var(--primary)) !important;
+    text-decoration: underline;
+  }
+  
+  /* Ajusta contraste no modo light */
+  [data-theme="light"] .message.user {
+    filter: brightness(0.95);
+  }
+  

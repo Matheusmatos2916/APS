@@ -1,0 +1,32 @@
+@startuml
+left to right direction
+skinparam packageStyle rectangle
+
+actor "Usuario" as Usuario
+actor "Auth (Chainlit)" as ChainlitAuth
+actor "LLM (ChatGroq)" as LLM
+actor "PubMed API" as PubMedAPI
+actor "Banco de Dados" as BD
+
+rectangle "Aplicacao Chainlit (Langchain)" as App {
+  usecase "Autenticar usuario" as UCAuth
+  usecase "Extrair termo medico" as UCExtract
+  usecase "Buscar artigos no PubMed" as UCPubMed
+  usecase "Gerar resposta com base no contexto" as UCGenerate
+  usecase "Adicionar referencias com links (PMID)" as UCRefs
+  usecase "Strip de referencias em texto simples" as UCStrip
+}
+
+Usuario --> UCAuth
+ChainlitAuth --> UCAuth
+BD --> UCAuth
+
+LLM --> UCExtract
+PubMedAPI --> UCPubMed
+
+UCExtract ..> UCGenerate : <<include>>
+UCPubMed ..> UCGenerate : <<include>>
+UCGenerate ..> UCStrip : <<include>>
+UCRefs ..> UCGenerate : <<include>>
+
+@enduml

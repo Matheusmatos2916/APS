@@ -1,0 +1,48 @@
+@startuml
+autonumber
+actor "Usuario" as Usuario
+
+participant "Chainlit App (app.py)" as App
+participant "Auth callback (auth_callback)" as Auth
+participant "Banco de Dados (database.py)" as DB
+
+participant "LLM (ChatGroq)" as LLM
+participant "PubMedService (search_pubmed_context)" as PubMedService
+participant "PubMed API (eutils)" as PubMedAPI
+
+== Autenticacao ==
+Usuario -> Auth: enviar credenciais
+Auth -> DB: init_db()
+Auth -> DB: verify_user(username, password)
+DB --> Auth: valido (bool)
+Auth --> App: retornar cl.User (ou None)
+App --> Usuario: acesso permitido/negado
+
+== Iteracao de mensagem ==
+Usuario -> App: enviar mensagem (message.content)
+
+App -> App: extract_medical_term_with_llm(query)
+App -> LLM: gerar termo medico
+LLM --> App: termo medico
+
+App -> App: enviar loading ("Buscando artigos...")
+
+App -> PubMedService: search_pubmed_context(termo, limit)
+PubMedService -> PubMedAPI: esearch.fcgi(term, retmax)
+PubMedAPI --> PubMedService: ids[]
+PubMedService -> PubMedAPI: efetch.fcgi(ids, retmode=xml)
+PubMedAPI --> PubMedService: xml_text
+
+PubMedService -> PubMedService: parse_articles(xml_text)\n+ build_context_from_pubmed_articles()
+PubMedService --> App: context_str, articles[]
+
+App -> App: chain.ainvoke(input, chat_history, context)
+App -> LLM: prompt + chat_history + context
+LLM --> App: response_text
+
+App -> App: _strip_plain_references(response_text)
+App -> App: build_references_markdown(articles)
+
+App --> Usuario: atualizar mensagem com resposta + links
+
+@enduml

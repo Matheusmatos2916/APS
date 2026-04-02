@@ -1,0 +1,20 @@
+{
+  "variables": {
+    "light": {
+      "--background": "210 100% 98%",
+      "--foreground": "210 15% 15%",
+      "--primary": "220 70% 45%",
+      "--primary-foreground": "0 0% 100%",
+      "--card": "210 20% 95%",
+      "--popover": "210 20% 98%"
+    },
+    "dark": {
+      "--background": "220 15% 12%",
+      "--foreground": "220 10% 90%",
+      "--primary": "300 80% 60%",
+      "--primary-foreground": "0 0% 100%",
+      "--card": "220 10% 18%",
+      "--popover": "220 10% 22%"
+    }
+  }
+}

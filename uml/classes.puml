@@ -1,0 +1,79 @@
+@startuml
+hide empty members
+skinparam classAttributeIconSize 0
+
+class "ChainlitApp (app.py)" as ChatApp {
+  +extract_medical_term_with_llm(query: str): str
+  +model_call()
+  +auth_callback(username: str, password: str)
+  +get_data_layer()
+  +_setup_chain()
+  +on_chat_resume(thread)
+  +chat_start()
+  +main(message)
+
+  +search_pubmed_context(query: str, limit: int): (str, List<Article>)
+  +build_context_from_pubmed_articles(articles: List<dict>): str
+  +build_references_markdown(articles: List<dict>): str
+  +_strip_plain_references(text: str): str
+}
+
+class "Database (database.py)" as Database {
+  +init_db()
+  +hash_password(password: str): str
+  +create_user(username: str, password: str): bool
+  +verify_user(username: str, password: str): bool
+  +user_exists(username: str): bool
+}
+
+class "PubMedClient (teste_resquest_pubmed.py)" as PubMedClient {
+  +search_pubmed(query, retmax): List<string>
+  +fetch_article_details(ids): str
+  +parse_articles(xml_text): List<Article>
+}
+
+class "PubMedService (em app.py)" as PubMedService {
+  +search_pubmed_context(query: str, limit: int): (str, List<Article>)
+  +build_context_from_pubmed_articles(articles: List<Article>): str
+}
+
+class "LLMClient (app.py)" as LLMClient {
+  +model_call()
+  +extract_medical_term_with_llm(query: str): str
+}
+
+class "ChatGroq" as ChatGroq
+class "ChatPromptTemplate" as ChatPromptTemplate
+class "StrOutputParser" as StrOutputParser
+class "Chain (LangChain)" as Chain {
+  +ainvoke(input, chat_history, context): str
+}
+
+class "PubMed API (eutils)" as PubMedAPI
+
+class "Article" as Article {
+  +pmid: str
+  +title: str
+  +journal: str
+  +year: str
+  +doi: str
+  +authors: str
+  +abstract: str
+  +full_text_links: List<(label, url)>
+}
+
+' Relacoes principais entre componentes
+ChatApp ..> Database : verifica credenciais (auth_callback)
+ChatApp ..> LLMClient : extrai termo e gera resposta
+ChatApp ..> PubMedService : busca contexto e artigos
+PubMedService ..> PubMedClient : chama search_pubmed/fetch/parse
+PubMedClient ..> PubMedAPI : requisicoes HTTP (eutils)
+ChatApp ..> Article : monta bloco de referencias (PMID->links)
+
+' Relacao do pipeline do prompt/chain
+ChatApp ..> Chain : utiliza chain.ainvoke(...)
+Chain ..> ChatPromptTemplate : compoe prompt com MessagesPlaceholder
+Chain ..> ChatGroq : modelo para gerar saida
+Chain ..> StrOutputParser : parseia em string
+
+@enduml
