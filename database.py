@@ -6,6 +6,8 @@ import hashlib
 import os
 from typing import Optional
 
+import bcrypt
+
 # Caminho do banco de dados
 DB_PATH = os.path.join(os.path.dirname(__file__), "users.db")
 
@@ -28,15 +30,28 @@ async def init_db():
 
 def hash_password(password: str) -> str:
     """
-    Gera um hash SHA-256 da senha.
+    Gera um hash bcrypt da senha.
     
     Args:
         password: Senha em texto plano
         
     Returns:
-        Hash hexadecimal da senha
+        Hash bcrypt (string) para persistência no banco
     """
-    return hashlib.sha256(password.encode()).hexdigest()
+    if password is None:
+        raise ValueError("password não pode ser None")
+    pw_bytes = password.encode("utf-8")
+    hashed = bcrypt.hashpw(pw_bytes, bcrypt.gensalt())
+    return hashed.decode("utf-8")
+
+
+def _is_bcrypt_hash(value: str) -> bool:
+    # Formatos comuns: $2a$, $2b$, $2y$
+    return isinstance(value, str) and value.startswith("$2")
+
+
+def _legacy_sha256(password: str) -> str:
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
 
 async def create_user(username: str, password: str) -> bool:
@@ -75,14 +90,35 @@ async def verify_user(username: str, password: str) -> bool:
     Returns:
         True se as credenciais estão corretas, False caso contrário
     """
-    password_hash = hash_password(password)
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
             "SELECT password_hash FROM users WHERE username = ?",
             (username,)
         ) as cursor:
             row = await cursor.fetchone()
-            if row and row[0] == password_hash:
+            if not row or not row[0]:
+                return False
+
+            stored = row[0]
+
+            # bcrypt (padrão atual)
+            if _is_bcrypt_hash(stored):
+                try:
+                    return bcrypt.checkpw(
+                        password.encode("utf-8"),
+                        stored.encode("utf-8"),
+                    )
+                except Exception:
+                    return False
+
+            # SHA-256 legado (compatibilidade): valida e migra para bcrypt
+            if stored == _legacy_sha256(password):
+                new_hash = hash_password(password)
+                await db.execute(
+                    "UPDATE users SET password_hash = ? WHERE username = ?",
+                    (new_hash, username),
+                )
+                await db.commit()
                 return True
     return False
 
