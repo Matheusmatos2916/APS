@@ -36,6 +36,47 @@ groq_api_key = os.getenv("GROQ_API_KEY")
 chainlit_auth_secret = os.getenv("CHAINLIT_AUTH_SECRET")
 url_database = os.getenv("DATABASE_CHAINLIT")
 
+
+def _ensure_chainlit_sql_schema() -> None:
+    """
+    Garante colunas exigidas pela versão atual do Chainlit no PostgreSQL.
+    Sem isso, INSERTs em `steps` falham (ex.: coluna autoCollapse ausente após upgrade)
+    e o histórico não persiste — ver logs do Chainlit.
+    """
+    if not url_database or "postgresql" not in url_database:
+        return
+    dsn = url_database.replace("postgresql+asyncpg://", "postgresql://", 1)
+    try:
+        import asyncpg
+    except ImportError:
+        return
+
+    async def _migrate() -> None:
+        conn = await asyncpg.connect(dsn=dsn)
+        try:
+            await conn.execute(
+                'ALTER TABLE steps ADD COLUMN IF NOT EXISTS "autoCollapse" BOOLEAN DEFAULT FALSE'
+            )
+        finally:
+            await conn.close()
+
+    try:
+        asyncio.run(_migrate())
+    except RuntimeError:
+        # Import do app com event loop já ativo (raro): migração manual ou script separado
+        print(
+            "[chainlit-db] Migração automática ignorada (event loop ativo). "
+            'Execute no PostgreSQL: ALTER TABLE steps ADD COLUMN IF NOT EXISTS "autoCollapse" BOOLEAN DEFAULT FALSE;'
+        )
+    except Exception as e:
+        print(
+            f"[chainlit-db] Falha na migração automática: {e!r}. "
+            'Se o histórico não salvar, rode: ALTER TABLE steps ADD COLUMN IF NOT EXISTS "autoCollapse" BOOLEAN DEFAULT FALSE;'
+        )
+
+
+_ensure_chainlit_sql_schema()
+
 # --- Qdrant desativado ---
 # PDF do ROD para indexar no Qdrant em memória
 # PDF_PATH = os.path.join(os.path.dirname(__file__), "pdf", "ROD_atualizado.pdf")
@@ -284,29 +325,34 @@ def get_data_layer():
     return SQLAlchemyDataLayer(conninfo=url_database)
 
 def _setup_chain():
-    """Configura model, prompt e chain na sessão (usado em chat_start e on_chat_resume)."""
-    model = model_call()
-    cl.user_session.set("model", model)
+    """
+    Modo demonstração (UI + histórico): não instancia LLM nem chain na sessão.
+    Para reativar a resposta real da IA, descomente o bloco abaixo e comente as duas linhas de sessão.
+    """
     cl.user_session.set("chat_history", [])
-    yaml_path = os.path.join(os.path.dirname(__file__), "Templates_prompt", "prompt.yaml")
-    with open(yaml_path, "r", encoding="utf-8") as f:
-        prompt_config = yaml.safe_load(f)
-    system_prompt_base = prompt_config.get("system_prompt", "")
-    system_prompt = (
-        f"{system_prompt_base}\n\n"
-        "Use o contexto abaixo, que contém artigos científicos do PubMed, para fundamentar sua resposta. "
-        "Quando houver artigos no contexto, cite-os na resposta (mencione PMID, título ou autores). "
-        "Só diga que não encontrou artigos se o contexto estiver vazio ou indicar explicitamente que não há resultados. "
-        "Não inclua no final da sua resposta uma seção 'Referências' nem lista de PMIDs; as referências com links serão adicionadas automaticamente.\n\n"
-        "Contexto (artigos PubMed):\n{context}"
-    )
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", system_prompt),
-        MessagesPlaceholder(variable_name="chat_history"),
-        ("human", "{input}")
-    ])
-    chain = prompt | model | StrOutputParser()
-    cl.user_session.set("chain", chain)
+    cl.user_session.set("chain", None)
+    # model = model_call()
+    # cl.user_session.set("model", model)
+    # cl.user_session.set("chat_history", [])
+    # yaml_path = os.path.join(os.path.dirname(__file__), "Templates_prompt", "prompt.yaml")
+    # with open(yaml_path, "r", encoding="utf-8") as f:
+    #     prompt_config = yaml.safe_load(f)
+    # system_prompt_base = prompt_config.get("system_prompt", "")
+    # system_prompt = (
+    #     f"{system_prompt_base}\n\n"
+    #     "Use o contexto abaixo, que contém artigos científicos do PubMed, para fundamentar sua resposta. "
+    #     "Quando houver artigos no contexto, cite-os na resposta (mencione PMID, título ou autores). "
+    #     "Só diga que não encontrou artigos se o contexto estiver vazio ou indicar explicitamente que não há resultados. "
+    #     "Não inclua no final da sua resposta uma seção 'Referências' nem lista de PMIDs; as referências com links serão adicionadas automaticamente.\n\n"
+    #     "Contexto (artigos PubMed):\n{context}"
+    # )
+    # prompt = ChatPromptTemplate.from_messages([
+    #     ("system", system_prompt),
+    #     MessagesPlaceholder(variable_name="chat_history"),
+    #     ("human", "{input}")
+    # ])
+    # chain = prompt | model | StrOutputParser()
+    # cl.user_session.set("chain", chain)
 
 
 @cl.on_chat_resume
@@ -326,6 +372,13 @@ async def on_chat_resume(thread: ThreadDict):
 @cl.on_chat_start
 async def chat_start():
     _setup_chain()
+    await cl.Message(
+        content=(
+            "Bem-vindo ao **KlyraAI**. Você está no modo demonstração: o layout e o envio de mensagens "
+            "funcionam normalmente e o histórico da sessão é mantido, mas a resposta do assistente é **simulada** "
+            "(sem chamadas à LLM nem ao PubMed)."
+        )
+    ).send()
 
 # --- Qdrant desativado: não é mais necessário indexar ROD ---
 # async def _ensure_qdrant_ready(msg_loading: Optional[cl.Message] = None):
@@ -344,51 +397,48 @@ async def chat_start():
 
 @cl.on_message
 async def main(message: cl.Message):
-    # Obtém a chain e o histórico da sessão
-    chain = cl.user_session.get("chain")
-    chat_history = cl.user_session.get("chat_history")
+    chat_history = cl.user_session.get("chat_history") or []
 
-    # Extrai termo médico com LLM (ex: "quero saber mais sobre alzheimer" -> "alzheimer")
-    search_term = await extract_medical_term_with_llm(message.content)
-
-    # Mensagem de loading (enviada logo para o usuário ver resposta)
-    msg = cl.Message(content="Buscando artigos no PubMed...")
+    msg = cl.Message(content="")
     await msg.send()
 
-    # Busca contexto no PubMed usando o termo extraído (em thread para não bloquear)
-    context, articles = await asyncio.to_thread(
-        search_pubmed_context,
-        search_term,
-        limit=PUBMED_SEARCH_LIMIT,
-    )
-    if not context:
-        context = "Nenhum artigo relevante encontrado no PubMed para esta busca."
-
-    # Adiciona a mensagem do usuário ao histórico
+    # --- Modo demonstração: resposta mockada (sem LLM / sem PubMed). Histórico de HumanMessage/AIMessage mantido. ---
+    user_text = (message.content or "").strip() or "(mensagem vazia)"
     chat_history.append(HumanMessage(content=message.content))
-
-    # Processa a mensagem com o histórico e o contexto do PubMed
-    response = await chain.ainvoke({
-        "input": message.content,
-        "chat_history": chat_history,
-        "context": context,
-    })
-
-    # Remove qualquer bloco "Referências: PMID ..." em texto simples que o modelo tenha gerado
-    # (ficamos só com o bloco que adicionamos abaixo, com links clicáveis)
-    response = _strip_plain_references(response)
-
-    # Área de referências com links clicáveis (PMID → full_text_links)
-    references_block = build_references_markdown(articles)
-    if references_block:
-        response = response.rstrip() + "\n\n---\n\n" + references_block
-
-    # Adiciona a resposta do modelo ao histórico
+    response = (
+        f"*(Resposta simulada do assistente)*\n\n"
+        f"Recebi a sua mensagem: **{user_text}**\n\n"
+        "Em produção, aqui entrariam a extração do termo com LLM, a busca no PubMed e a resposta gerada pelo modelo."
+    )
     chat_history.append(AIMessage(content=response))
-
-    # Atualiza o histórico na sessão
     cl.user_session.set("chat_history", chat_history)
-
-    # Atualiza a mensagem com a resposta
     msg.content = response
     await msg.update()
+
+    # --- Produção (LLM + PubMed): descomente para reativar ---
+    # chain = cl.user_session.get("chain")
+    # # Extrai termo médico com LLM (ex: "quero saber mais sobre alzheimer" -> "alzheimer")
+    # search_term = await extract_medical_term_with_llm(message.content)
+    # msg.content = "Buscando artigos no PubMed..."
+    # await msg.update()
+    # context, articles = await asyncio.to_thread(
+    #     search_pubmed_context,
+    #     search_term,
+    #     limit=PUBMED_SEARCH_LIMIT,
+    # )
+    # if not context:
+    #     context = "Nenhum artigo relevante encontrado no PubMed para esta busca."
+    # chat_history.append(HumanMessage(content=message.content))
+    # response = await chain.ainvoke({
+    #     "input": message.content,
+    #     "chat_history": chat_history,
+    #     "context": context,
+    # })
+    # response = _strip_plain_references(response)
+    # references_block = build_references_markdown(articles)
+    # if references_block:
+    #     response = response.rstrip() + "\n\n---\n\n" + references_block
+    # chat_history.append(AIMessage(content=response))
+    # cl.user_session.set("chat_history", chat_history)
+    # msg.content = response
+    # await msg.update()
