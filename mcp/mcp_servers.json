@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "pubmed-search": {
+      "command": "python",
+      "args": [
+        "mcp/mcp_pubmed_server.py"
+      ],
+      "description": "PubMed search and article parsing tools"
+    }
+  }
+}

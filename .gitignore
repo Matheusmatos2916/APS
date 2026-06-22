@@ -17,7 +17,7 @@ ENV/
 .chainlit/chat.db
 
 # Database
-users.db
+databases/users.db
 
 # IDE
 .vscode/
@@ -31,5 +31,5 @@ Thumbs.db
 
 # UV
 .uv/
-init_chainlit_db.sql
+databases/init_chainlit_db.sql
 pdf/

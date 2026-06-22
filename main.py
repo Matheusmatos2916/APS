@@ -21,7 +21,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import VectorParams, Distance, PointStruct
 from sentence_transformers import SentenceTransformer
 
-from database import init_db, verify_user
+from databases.database import init_db, verify_user
 
 dotenv.load_dotenv()
 
@@ -230,7 +230,7 @@ def build_context(results):
 def model_call():
 
     return ChatGroq(
-        model="openai/gpt-oss-120b",
+        model="llama-3.3-70b-versatile",
         api_key=groq_api_key,
     )
 

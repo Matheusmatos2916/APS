@@ -3,7 +3,7 @@ import dotenv
 import chainlit as cl
 from chainlit.data.sql_alchemy import SQLAlchemyDataLayer
 
-from database import init_db, verify_user
+from databases.database import init_db, verify_user
 
 # carrega variáveis do .env
 dotenv.load_dotenv()
